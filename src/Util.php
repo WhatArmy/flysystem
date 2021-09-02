@@ -142,9 +142,9 @@ class Util
      */
     protected static function removeFunkyWhiteSpace($path)
     {
-        if (preg_match('#\p{C}+#u', $path)) {
-            throw CorruptedPathDetected::forPath($path);
-        }
+//        if (preg_match('#\p{C}+#u', $path)) {
+//            throw CorruptedPathDetected::forPath($path);
+//        }
 
         return $path;
     }
