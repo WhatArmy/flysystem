@@ -16,9 +16,9 @@ class WhitespacePathNormalizer implements PathNormalizer
 
     private function rejectFunkyWhiteSpace(string $path): void
     {
-        if (preg_match('#\p{C}+#u', $path)) {
-            throw CorruptedPathDetected::forPath($path);
-        }
+//        if (preg_match('#\p{C}+#u', $path)) {
+//            throw CorruptedPathDetected::forPath($path);
+//        }
     }
 
     private function normalizeRelativePath(string $path): string
