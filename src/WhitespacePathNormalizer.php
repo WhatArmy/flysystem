@@ -9,7 +9,7 @@ class WhitespacePathNormalizer implements PathNormalizer
     public function normalizePath(string $path): string
     {
         $path = str_replace('\\', '/', $path);
-        $this->rejectFunkyWhiteSpace($path);
+        //$this->rejectFunkyWhiteSpace($path);
 
         return $this->normalizeRelativePath($path);
     }
