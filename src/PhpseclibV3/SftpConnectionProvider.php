@@ -4,12 +4,12 @@ declare(strict_types=1);
 
 namespace League\Flysystem\PhpseclibV3;
 
+use League\Flysystem\FilesystemException;
 use phpseclib3\Crypt\Common\AsymmetricKey;
 use phpseclib3\Crypt\PublicKeyLoader;
 use phpseclib3\Exception\NoKeyLoadedException;
 use phpseclib3\Net\SFTP;
 use phpseclib3\System\SSH\Agent;
-use RuntimeException;
 use Throwable;
 
 use function base64_decode;
@@ -18,35 +18,6 @@ use function str_split;
 
 class SftpConnectionProvider implements ConnectionProvider
 {
-    /**
-     * @var string
-     */
-    private $host;
-
-    /**
-     * @var string
-     */
-    private $username;
-
-    /**
-     * @var string|null
-     */
-    private $password;
-
-    /**
-     * @var bool
-     */
-    private $useAgent;
-
-    /**
-     * @var int
-     */
-    private $port;
-
-    /**
-     * @var int
-     */
-    private $timeout;
 
     /**
      * @var SFTP|null
@@ -58,50 +29,21 @@ class SftpConnectionProvider implements ConnectionProvider
      */
     private $connectivityChecker;
 
-    /**
-     * @var string|null
-     */
-    private $hostFingerprint;
-
-    /**
-     * @var string|null
-     */
-    private $privateKey;
-
-    /**
-     * @var string|null
-     */
-    private $passphrase;
-
-    /**
-     * @var int
-     */
-    private $maxTries;
-
     public function __construct(
-        string $host,
-        string $username,
-        string $password = null,
-        string $privateKey = null,
-        string $passphrase = null,
-        int $port = 22,
-        bool $useAgent = false,
-        int $timeout = 10,
-        int $maxTries = 4,
-        string $hostFingerprint = null,
-        ConnectivityChecker $connectivityChecker = null
+        private string $host,
+        private string $username,
+        private ?string $password = null,
+        private ?string $privateKey = null,
+        private ?string $passphrase = null,
+        private int $port = 22,
+        private bool $useAgent = false,
+        private int $timeout = 10,
+        private int $maxTries = 4,
+        private ?string $hostFingerprint = null,
+        ConnectivityChecker $connectivityChecker = null,
+        private array $preferredAlgorithms = []
     ) {
-        $this->host = $host;
-        $this->username = $username;
-        $this->password = $password;
-        $this->privateKey = $privateKey;
-        $this->passphrase = $passphrase;
-        $this->useAgent = $useAgent;
-        $this->port = $port;
-        $this->timeout = $timeout;
-        $this->hostFingerprint = $hostFingerprint;
         $this->connectivityChecker = $connectivityChecker ?: new SimpleConnectivityChecker();
-        $this->maxTries = $maxTries;
     }
 
     public function provideConnection(): SFTP
@@ -131,6 +73,7 @@ class SftpConnectionProvider implements ConnectionProvider
     private function setupConnection(): SFTP
     {
         $connection = new SFTP($this->host, $this->port, $this->timeout);
+        $connection->setPreferredAlgorithms($this->preferredAlgorithms);
         $connection->disableStatCache();
 
         try {
@@ -138,7 +81,10 @@ class SftpConnectionProvider implements ConnectionProvider
             $this->authenticate($connection);
         } catch (Throwable $exception) {
             $connection->disconnect();
-            throw $exception;
+
+            if ($exception instanceof FilesystemException) {
+                throw $exception;
+            }
         }
 
         return $connection;
@@ -150,7 +96,12 @@ class SftpConnectionProvider implements ConnectionProvider
             return;
         }
 
-        $publicKey = $connection->getServerPublicHostKey() ?: 'no-public-key';
+        $publicKey = $connection->getServerPublicHostKey();
+
+        if ($publicKey === false) {
+            throw UnableToEstablishAuthenticityOfHost::becauseTheAuthenticityCantBeEstablished($this->host);
+        }
+
         $fingerprint = $this->getFingerprintFromPublicKey($publicKey);
 
         if (0 !== strcasecmp($this->hostFingerprint, $fingerprint)) {
@@ -190,7 +141,8 @@ class SftpConnectionProvider implements ConnectionProvider
             $options['timeout'] ?? 10,
             $options['maxTries'] ?? 4,
             $options['hostFingerprint'] ?? null,
-            $options['connectivityChecker'] ?? null
+            $options['connectivityChecker'] ?? null,
+            $options['preferredAlgorithms'] ?? [],
         );
     }
 
@@ -224,8 +176,6 @@ class SftpConnectionProvider implements ConnectionProvider
         } catch (NoKeyLoadedException $exception) {
             throw new UnableToLoadPrivateKey();
         }
-
-        throw new RuntimeException();
     }
 
     private function authenticateWithAgent(SFTP $connection): void

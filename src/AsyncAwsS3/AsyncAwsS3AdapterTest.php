@@ -5,17 +5,17 @@ declare(strict_types=1);
 namespace League\Flysystem\AsyncAwsS3;
 
 use AsyncAws\Core\Exception\Http\ClientException;
-
 use AsyncAws\Core\Exception\Http\NetworkException;
 use AsyncAws\Core\Test\Http\SimpleMockedResponse;
 use AsyncAws\Core\Test\ResultMockFactory;
-
 use AsyncAws\S3\Result\HeadObjectOutput;
 use AsyncAws\S3\Result\PutObjectOutput;
 use AsyncAws\S3\S3Client;
 use AsyncAws\SimpleS3\SimpleS3Client;
 use Exception;
 use League\Flysystem\AdapterTestUtilities\FilesystemAdapterTestCase;
+use League\Flysystem\AwsS3V3\AwsS3V3Adapter;
+use League\Flysystem\ChecksumAlgoIsNotSupported;
 use League\Flysystem\Config;
 use League\Flysystem\FileAttributes;
 use League\Flysystem\FilesystemAdapter;
@@ -24,6 +24,7 @@ use League\Flysystem\UnableToCheckFileExistence;
 use League\Flysystem\UnableToDeleteFile;
 use League\Flysystem\UnableToMoveFile;
 use League\Flysystem\UnableToRetrieveMetadata;
+use League\Flysystem\Visibility;
 
 /**
  * @group aws
@@ -96,11 +97,41 @@ class AsyncAwsS3AdapterTest extends FilesystemAdapterTestCase
             self::markTestSkipped('No AWS credentials present for testing.');
         }
 
-        return static::$s3Client = new S3Client([
+        static::$s3Client = new SimpleS3Client([
             'accessKeyId' => $key,
             'accessKeySecret' => $secret,
             'region' => $region,
         ]);
+
+        return static::$s3Client;
+    }
+
+
+
+    /**
+     * @test
+     */
+    public function specifying_a_custom_checksum_algo_is_not_supported(): void
+    {
+        /** @var AwsS3V3Adapter $adapter */
+        $adapter = $this->adapter();
+
+        $this->expectException(ChecksumAlgoIsNotSupported::class);
+
+        $adapter->checksum('something', new Config(['checksum_algo' => 'md5']));
+    }
+
+    /**
+     * @test
+     *
+     * @see https://github.com/thephpleague/flysystem-aws-s3-v3/issues/287
+     */
+    public function issue_287(): void
+    {
+        $adapter = $this->adapter();
+        $adapter->write('KmFVvKqo/QLMExy2U/620ff60c8a154.pdf', 'pdf content', new Config());
+
+        self::assertTrue($adapter->directoryExists('KmFVvKqo'));
     }
 
     /**
@@ -280,6 +311,54 @@ class AsyncAwsS3AdapterTest extends FilesystemAdapterTestCase
 
         $filesystem = new AsyncAwsS3Adapter($s3Client, $bucket, $prefix);
         $filesystem->write($file, $contents, new Config());
+    }
+
+    /**
+     * @test
+     */
+    public function moving_a_file_with_visibility(): void
+    {
+        $this->runScenario(function () {
+            $adapter = $this->adapter();
+            $adapter->write(
+                'source.txt',
+                'contents to be copied',
+                new Config([Config::OPTION_VISIBILITY => Visibility::PUBLIC])
+            );
+            $adapter->move('source.txt', 'destination.txt', new Config([Config::OPTION_VISIBILITY => Visibility::PRIVATE]));
+            $this->assertFalse(
+                $adapter->fileExists('source.txt'),
+                'After moving a file should no longer exist in the original location.'
+            );
+            $this->assertTrue(
+                $adapter->fileExists('destination.txt'),
+                'After moving, a file should be present at the new location.'
+            );
+            $this->assertEquals(Visibility::PRIVATE, $adapter->visibility('destination.txt')->visibility());
+            $this->assertEquals('contents to be copied', $adapter->read('destination.txt'));
+        });
+    }
+
+    /**
+     * @test
+     */
+    public function copying_a_file_with_visibility(): void
+    {
+        $this->runScenario(function () {
+            $adapter = $this->adapter();
+            $adapter->write(
+                'source.txt',
+                'contents to be copied',
+                new Config([Config::OPTION_VISIBILITY => Visibility::PUBLIC])
+            );
+
+            $adapter->copy('source.txt', 'destination.txt', new Config([Config::OPTION_VISIBILITY => Visibility::PRIVATE]));
+
+            $this->assertTrue($adapter->fileExists('source.txt'));
+            $this->assertTrue($adapter->fileExists('destination.txt'));
+            $this->assertEquals(Visibility::PRIVATE, $adapter->visibility('destination.txt')->visibility());
+            $this->assertEquals('contents to be copied', $adapter->read('destination.txt'));
+        });
     }
 
     protected static function createFilesystemAdapter(): FilesystemAdapter

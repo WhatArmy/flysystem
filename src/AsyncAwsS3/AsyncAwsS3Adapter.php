@@ -12,7 +12,11 @@ use AsyncAws\S3\ValueObject\AwsObject;
 use AsyncAws\S3\ValueObject\CommonPrefix;
 use AsyncAws\S3\ValueObject\ObjectIdentifier;
 use AsyncAws\SimpleS3\SimpleS3Client;
+use DateTimeImmutable;
+use DateTimeInterface;
 use Generator;
+use League\Flysystem\ChecksumAlgoIsNotSupported;
+use League\Flysystem\ChecksumProvider;
 use League\Flysystem\Config;
 use League\Flysystem\DirectoryAttributes;
 use League\Flysystem\FileAttributes;
@@ -23,18 +27,22 @@ use League\Flysystem\UnableToCheckDirectoryExistence;
 use League\Flysystem\UnableToCheckFileExistence;
 use League\Flysystem\UnableToCopyFile;
 use League\Flysystem\UnableToDeleteFile;
+use League\Flysystem\UnableToGeneratePublicUrl;
+use League\Flysystem\UnableToGenerateTemporaryUrl;
 use League\Flysystem\UnableToMoveFile;
+use League\Flysystem\UnableToProvideChecksum;
 use League\Flysystem\UnableToReadFile;
 use League\Flysystem\UnableToRetrieveMetadata;
 use League\Flysystem\UnableToSetVisibility;
+use League\Flysystem\UrlGeneration\PublicUrlGenerator;
+use League\Flysystem\UrlGeneration\TemporaryUrlGenerator;
 use League\Flysystem\Visibility;
 use League\MimeTypeDetection\FinfoMimeTypeDetector;
 use League\MimeTypeDetection\MimeTypeDetector;
 use Throwable;
-
 use function trim;
 
-class AsyncAwsS3Adapter implements FilesystemAdapter
+class AsyncAwsS3Adapter implements FilesystemAdapter, PublicUrlGenerator, ChecksumProvider, TemporaryUrlGenerator
 {
     /**
      * @var string[]
@@ -46,12 +54,14 @@ class AsyncAwsS3Adapter implements FilesystemAdapter
         'ContentEncoding',
         'ContentLength',
         'ContentType',
+        'ContentMD5',
         'Expires',
         'GrantFullControl',
         'GrantRead',
         'GrantReadACP',
         'GrantWriteACP',
         'Metadata',
+        'MetadataDirective',
         'RequestPayer',
         'SSECustomerAlgorithm',
         'SSECustomerKey',
@@ -61,6 +71,7 @@ class AsyncAwsS3Adapter implements FilesystemAdapter
         'StorageClass',
         'Tagging',
         'WebsiteRedirectLocation',
+        'ChecksumAlgorithm',
     ];
 
     /**
@@ -73,46 +84,37 @@ class AsyncAwsS3Adapter implements FilesystemAdapter
         'VersionId',
     ];
 
-    /**
-     * @var S3Client
-     */
-    private $client;
+    private PathPrefixer $prefixer;
+    private VisibilityConverter $visibility;
+    private MimeTypeDetector $mimeTypeDetector;
 
     /**
-     * @var PathPrefixer
+     * @var array|string[]
      */
-    private $prefixer;
+    private array $forwardedOptions;
 
     /**
-     * @var string
+     * @var array|string[]
      */
-    private $bucket;
-
-    /**
-     * @var VisibilityConverter
-     */
-    private $visibility;
-
-    /**
-     * @var MimeTypeDetector
-     */
-    private $mimeTypeDetector;
+    private array $metadataFields;
 
     /**
      * @param S3Client|SimpleS3Client $client Uploading of files larger than 5GB is only supported with SimpleS3Client
      */
     public function __construct(
-        S3Client $client,
-        string $bucket,
+        private S3Client $client,
+        private string $bucket,
         string $prefix = '',
         VisibilityConverter $visibility = null,
-        MimeTypeDetector $mimeTypeDetector = null
+        MimeTypeDetector $mimeTypeDetector = null,
+        array $forwardedOptions = self::AVAILABLE_OPTIONS,
+        array $metadataFields = self::EXTRA_METADATA_FIELDS,
     ) {
-        $this->client = $client;
         $this->prefixer = new PathPrefixer($prefix);
-        $this->bucket = $bucket;
         $this->visibility = $visibility ?: new PortableVisibilityConverter();
         $this->mimeTypeDetector = $mimeTypeDetector ?: new FinfoMimeTypeDetector();
+        $this->forwardedOptions = $forwardedOptions;
+        $this->metadataFields = $metadataFields;
     }
 
     public function fileExists(string $path): bool
@@ -166,8 +168,8 @@ class AsyncAwsS3Adapter implements FilesystemAdapter
 
     public function deleteDirectory(string $path): void
     {
-        $prefix = $this->prefixer->prefixPath($path);
-        $prefix = ltrim(rtrim($prefix, '/') . '/', '/');
+        $prefix = $this->prefixer->prefixDirectoryPath($path);
+        $prefix = ltrim($prefix, '/');
 
         $objects = [];
         $params = ['Bucket' => $this->bucket, 'Prefix' => $prefix];
@@ -205,7 +207,7 @@ class AsyncAwsS3Adapter implements FilesystemAdapter
         try {
             $this->client->putObjectAcl($arguments);
         } catch (Throwable $exception) {
-            throw UnableToSetVisibility::atLocation($path, '', $exception);
+            throw UnableToSetVisibility::atLocation($path, $exception->getMessage(), $exception);
         }
     }
 
@@ -217,7 +219,7 @@ class AsyncAwsS3Adapter implements FilesystemAdapter
             $result = $this->client->getObjectAcl($arguments);
             $grants = $result->getGrants();
         } catch (Throwable $exception) {
-            throw UnableToRetrieveMetadata::visibility($path, '', $exception);
+            throw UnableToRetrieveMetadata::visibility($path, $exception->getMessage(), $exception);
         }
 
         $visibility = $this->visibility->aclToVisibility($grants);
@@ -262,7 +264,7 @@ class AsyncAwsS3Adapter implements FilesystemAdapter
     {
         try {
             $prefix = $this->prefixer->prefixDirectoryPath($path);
-            $options = ['Bucket' => $this->bucket, 'Prefix' => $prefix, 'Delimiter' => '/'];
+            $options = ['Bucket' => $this->bucket, 'Prefix' => $prefix, 'MaxKeys' => 1, 'Delimiter' => '/'];
 
             return $this->client->listObjectsV2($options)->getKeyCount() > 0;
         } catch (Throwable $exception) {
@@ -301,7 +303,7 @@ class AsyncAwsS3Adapter implements FilesystemAdapter
     {
         try {
             /** @var string $visibility */
-            $visibility = $this->visibility($source)->visibility();
+            $visibility = $config->get(Config::OPTION_VISIBILITY) ?: $this->visibility($source)->visibility();
         } catch (Throwable $exception) {
             throw UnableToCopyFile::fromLocationTo($source, $destination, $exception);
         }
@@ -358,7 +360,7 @@ class AsyncAwsS3Adapter implements FilesystemAdapter
     {
         $options = [];
 
-        foreach (static::AVAILABLE_OPTIONS as $option) {
+        foreach ($this->forwardedOptions as $option) {
             $value = $config->get($option, '__NOT_SET__');
 
             if ('__NOT_SET__' !== $value) {
@@ -377,13 +379,13 @@ class AsyncAwsS3Adapter implements FilesystemAdapter
             $result = $this->client->headObject($arguments);
             $result->resolve();
         } catch (Throwable $exception) {
-            throw UnableToRetrieveMetadata::create($path, $type, '', $exception);
+            throw UnableToRetrieveMetadata::create($path, $type, $exception->getMessage(), $exception);
         }
 
         $attributes = $this->mapS3ObjectMetadata($result, $path);
 
         if ( ! $attributes instanceof FileAttributes) {
-            throw UnableToRetrieveMetadata::create($path, $type, '');
+            throw UnableToRetrieveMetadata::create($path, $type, 'Unable to retrieve file attributes, directory attributes received.');
         }
 
         return $attributes;
@@ -442,7 +444,7 @@ class AsyncAwsS3Adapter implements FilesystemAdapter
     {
         $extracted = [];
 
-        foreach (static::EXTRA_METADATA_FIELDS as $field) {
+        foreach ($this->metadataFields as $field) {
             $method = 'get' . $field;
             if ( ! method_exists($metadata, $method)) {
                 continue;
@@ -472,7 +474,52 @@ class AsyncAwsS3Adapter implements FilesystemAdapter
         try {
             return $this->client->getObject($options)->getBody();
         } catch (Throwable $exception) {
-            throw UnableToReadFile::fromLocation($path, '', $exception);
+            throw UnableToReadFile::fromLocation($path, $exception->getMessage(), $exception);
+        }
+    }
+
+    public function publicUrl(string $path, Config $config): string
+    {
+        if ( ! $this->client instanceof SimpleS3Client) {
+            throw UnableToGeneratePublicUrl::noGeneratorConfigured($path, 'Client needs to be instance of SimpleS3Client');
+        }
+
+        try {
+            return $this->client->getUrl($this->bucket, $this->prefixer->prefixPath($path));
+        } catch (Throwable $exception) {
+            throw UnableToGeneratePublicUrl::dueToError($path, $exception);
+        }
+    }
+
+    public function checksum(string $path, Config $config): string
+    {
+        $algo = $config->get('checksum_algo', 'etag');
+
+        if ($algo !== 'etag') {
+            throw new ChecksumAlgoIsNotSupported();
+        }
+
+        try {
+            $metadata = $this->fetchFileMetadata($path, 'checksum')->extraMetadata();
+        } catch (UnableToRetrieveMetadata $exception) {
+            throw new UnableToProvideChecksum($exception->reason(), $path, $exception);
+        }
+
+        if ( ! isset($metadata['ETag'])) {
+            throw new UnableToProvideChecksum('ETag header not available.', $path);
+        }
+
+        return trim($metadata['ETag'], '"');
+    }
+
+    public function temporaryUrl(string $path, DateTimeInterface $expiresAt, Config $config): string
+    {
+        $location = $this->prefixer->prefixPath($path);
+
+        try {
+            return $this->client->getPresignedUrl($this->bucket, $location, DateTimeImmutable::createFromInterface($expiresAt));
+        } catch (Throwable $exception) {
+            throw UnableToGenerateTemporaryUrl::dueToError($path, $exception);
         }
     }
 }

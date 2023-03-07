@@ -10,12 +10,13 @@ use League\Flysystem\FilesystemAdapter;
 use League\Flysystem\UnableToSetVisibility;
 use League\Flysystem\Visibility;
 use MicrosoftAzure\Storage\Blob\BlobRestProxy;
+use MicrosoftAzure\Storage\Common\Internal\StorageServiceSettings;
 use function getenv;
 
 /**
  * @group azure
  */
-class AzureBlobStorageTest extends TestCase
+class AzureBlobStorageAdapterTest extends TestCase
 {
     const CONTAINER_NAME = 'flysystem';
 
@@ -28,8 +29,14 @@ class AzureBlobStorageTest extends TestCase
         }
 
         $client = BlobRestProxy::createBlobService($dsn);
+        $serviceSettings = StorageServiceSettings::createFromConnectionString($dsn);
 
-        return new AzureBlobStorageAdapter($client, self::CONTAINER_NAME, 'ci');
+        return new AzureBlobStorageAdapter(
+            $client,
+            self::CONTAINER_NAME,
+            'ci',
+            serviceSettings: $serviceSettings,
+        );
     }
 
     /**

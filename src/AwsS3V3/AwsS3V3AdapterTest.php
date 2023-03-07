@@ -10,6 +10,7 @@ use Aws\S3\S3ClientInterface;
 use Exception;
 use Generator;
 use League\Flysystem\AdapterTestUtilities\FilesystemAdapterTestCase;
+use League\Flysystem\ChecksumAlgoIsNotSupported;
 use League\Flysystem\Config;
 use League\Flysystem\FileAttributes;
 use League\Flysystem\FilesystemAdapter;
@@ -18,11 +19,15 @@ use League\Flysystem\StorageAttributes;
 use League\Flysystem\UnableToCheckFileExistence;
 use League\Flysystem\UnableToDeleteFile;
 use League\Flysystem\UnableToMoveFile;
+use League\Flysystem\UnableToProvideChecksum;
 use League\Flysystem\UnableToRetrieveMetadata;
 use League\Flysystem\UnableToWriteFile;
+use League\Flysystem\Visibility;
 use RuntimeException;
 
+use function file_get_contents;
 use function getenv;
+use function iterator_to_array;
 
 /**
  * @group aws
@@ -120,6 +125,19 @@ class AwsS3V3AdapterTest extends FilesystemAdapterTestCase
 
     /**
      * @test
+     * @see https://github.com/thephpleague/flysystem-aws-s3-v3/issues/291
+     */
+    public function issue_291(): void
+    {
+        $adapter = $this->adapter();
+        $adapter->createDirectory('directory', new Config());
+        $listing = iterator_to_array($adapter->listContents('directory', true));
+
+        self::assertCount(0, $listing);
+    }
+
+    /**
+     * @test
      */
     public function listing_contents_recursive(): void
     {
@@ -151,6 +169,19 @@ class AwsS3V3AdapterTest extends FilesystemAdapterTestCase
         $this->expectException(UnableToMoveFile::class);
 
         $adapter->move('source.txt', 'destination.txt', new Config());
+    }
+
+    /**
+     * @test
+     *
+     * @see https://github.com/thephpleague/flysystem-aws-s3-v3/issues/287
+     */
+    public function issue_287(): void
+    {
+        $adapter = $this->adapter();
+        $adapter->write('KmFVvKqo/QLMExy2U/620ff60c8a154.pdf', 'pdf content', new Config());
+
+        self::assertTrue($adapter->directoryExists('KmFVvKqo'));
     }
 
     /**
@@ -275,6 +306,19 @@ class AwsS3V3AdapterTest extends FilesystemAdapterTestCase
 
     /**
      * @test
+     * @dataProvider casesWhereHttpStreamingInfluencesSeekability
+     */
+    public function use_globally_configured_options(bool $streaming): void
+    {
+        $adapter = $this->useAdapter($this->createFilesystemAdapter($streaming, ['ContentType' => 'text/plain+special']));
+        $this->givenWeHaveAnExistingFile('path.txt');
+
+        $mimeType = $adapter->mimeType('path.txt')->mimeType();
+        $this->assertSame('text/plain+special', $mimeType);
+    }
+
+    /**
+     * @test
      */
     public function moving_with_updated_metadata(): void
     {
@@ -306,6 +350,67 @@ class AwsS3V3AdapterTest extends FilesystemAdapterTestCase
         $permission = $response['Grants'][0]['Permission'];
 
         self::assertEquals('FULL_CONTROL', $permission);
+    }
+
+    /**
+     * @test
+     */
+    public function moving_a_file_with_visibility(): void
+    {
+        $this->runScenario(function () {
+            $adapter = $this->adapter();
+            $adapter->write(
+                'source.txt',
+                'contents to be copied',
+                new Config([Config::OPTION_VISIBILITY => Visibility::PUBLIC])
+            );
+            $adapter->move('source.txt', 'destination.txt', new Config([Config::OPTION_VISIBILITY => Visibility::PRIVATE]));
+            $this->assertFalse(
+                $adapter->fileExists('source.txt'),
+                'After moving a file should no longer exist in the original location.'
+            );
+            $this->assertTrue(
+                $adapter->fileExists('destination.txt'),
+                'After moving, a file should be present at the new location.'
+            );
+            $this->assertEquals(Visibility::PRIVATE, $adapter->visibility('destination.txt')->visibility());
+            $this->assertEquals('contents to be copied', $adapter->read('destination.txt'));
+        });
+    }
+
+    /**
+     * @test
+     */
+    public function specifying_a_custom_checksum_algo_is_not_supported(): void
+    {
+        /** @var AwsS3V3Adapter $adapter */
+        $adapter = $this->adapter();
+
+        $this->expectException(ChecksumAlgoIsNotSupported::class);
+
+        $adapter->checksum('something', new Config(['checksum_algo' => 'md5']));
+    }
+
+    /**
+     * @test
+     */
+    public function copying_a_file_with_visibility(): void
+    {
+        $this->runScenario(function () {
+            $adapter = $this->adapter();
+            $adapter->write(
+                'source.txt',
+                'contents to be copied',
+                new Config([Config::OPTION_VISIBILITY => Visibility::PUBLIC])
+            );
+
+            $adapter->copy('source.txt', 'destination.txt', new Config([Config::OPTION_VISIBILITY => Visibility::PRIVATE]));
+
+            $this->assertTrue($adapter->fileExists('source.txt'));
+            $this->assertTrue($adapter->fileExists('destination.txt'));
+            $this->assertEquals(Visibility::PRIVATE, $adapter->visibility('destination.txt')->visibility());
+            $this->assertEquals('contents to be copied', $adapter->read('destination.txt'));
+        });
     }
 
     protected static function createFilesystemAdapter(bool $streaming = true, array $options = []): FilesystemAdapter

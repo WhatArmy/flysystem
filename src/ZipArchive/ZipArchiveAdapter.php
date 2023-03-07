@@ -33,25 +33,19 @@ use function stream_copy_to_stream;
 
 final class ZipArchiveAdapter implements FilesystemAdapter
 {
-    /** @var PathPrefixer */
-    private $pathPrefixer;
-    /** @var MimeTypeDetector */
-    private $mimeTypeDetector;
-    /** @var VisibilityConverter */
-    private $visibility;
-    /** @var ZipArchiveProvider */
-    private $zipArchiveProvider;
+    private PathPrefixer $pathPrefixer;
+    private MimeTypeDetector$mimeTypeDetector;
+    private VisibilityConverter $visibility;
 
     public function __construct(
-        ZipArchiveProvider $zipArchiveProvider,
+        private ZipArchiveProvider $zipArchiveProvider,
         string $root = '',
         ?MimeTypeDetector $mimeTypeDetector = null,
         ?VisibilityConverter $visibility = null
     ) {
-        $this->pathPrefixer = new PathPrefixer($root);
+        $this->pathPrefixer = new PathPrefixer(ltrim($root, '/'));
         $this->mimeTypeDetector = $mimeTypeDetector ?? new FinfoMimeTypeDetector();
         $this->visibility = $visibility ?? new PortableVisibilityConverter();
-        $this->zipArchiveProvider = $zipArchiveProvider;
     }
 
     public function fileExists(string $path): bool
@@ -171,6 +165,8 @@ final class ZipArchiveAdapter implements FilesystemAdapter
             }
         }
 
+        $archive->deleteName($prefixedPath);
+
         $archive->close();
     }
 
@@ -241,7 +237,7 @@ final class ZipArchiveAdapter implements FilesystemAdapter
             $contents = $this->read($path);
             $mimetype = $this->mimeTypeDetector->detectMimeType($path, $contents);
         } catch (Throwable $exception) {
-            throw UnableToRetrieveMetadata::mimeType($path, '', $exception);
+            throw UnableToRetrieveMetadata::mimeType($path, $exception->getMessage(), $exception);
         }
 
         if ($mimetype === null) {
@@ -277,7 +273,7 @@ final class ZipArchiveAdapter implements FilesystemAdapter
         }
 
         if ($this->isDirectoryPath($stats['name'])) {
-            throw UnableToRetrieveMetadata::fileSize($path, "It's a directory.");
+            throw UnableToRetrieveMetadata::fileSize($path, 'It\'s a directory.');
         }
 
         return new FileAttributes($path, $stats['size'], null, null);
@@ -381,7 +377,7 @@ final class ZipArchiveAdapter implements FilesystemAdapter
         $archive = $this->zipArchiveProvider->createZipArchive();
         $prefixedDirname = $this->pathPrefixer->prefixDirectoryPath($dirname);
         $parts = array_filter(explode('/', trim($prefixedDirname, '/')));
-        $dirPath = '/';
+        $dirPath = '';
 
         foreach ($parts as $part) {
             $dirPath .= $part . '/';
@@ -411,7 +407,13 @@ final class ZipArchiveAdapter implements FilesystemAdapter
 
     private function isAtRootDirectory(string $directoryRoot, string $path): bool
     {
-        return $directoryRoot === (rtrim(dirname($path), '/') . '/');
+        $dirname = dirname($path);
+
+        if ('' === $directoryRoot && '.' === $dirname) {
+            return true;
+        }
+
+        return $directoryRoot === (rtrim($dirname, '/') . '/');
     }
 
     private function setVisibilityAttribute(string $statsName, string $visibility, ZipArchive $archive): bool

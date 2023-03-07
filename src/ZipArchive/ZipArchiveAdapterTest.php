@@ -22,7 +22,7 @@ use function iterator_to_array;
 /**
  * @group zip
  */
-final class ZipArchiveAdapterTest extends FilesystemAdapterTestCase
+abstract class ZipArchiveAdapterTest extends FilesystemAdapterTestCase
 {
     private const ARCHIVE = __DIR__ . '/test.zip';
 
@@ -52,8 +52,10 @@ final class ZipArchiveAdapterTest extends FilesystemAdapterTestCase
     {
         static::$archiveProvider = new StubZipArchiveProvider(self::ARCHIVE);
 
-        return new ZipArchiveAdapter(self::$archiveProvider, '/path-prefix');
+        return new ZipArchiveAdapter(self::$archiveProvider, static::getRoot());
     }
+
+    abstract protected static function getRoot(): string;
 
     /**
      * @test
@@ -139,6 +141,39 @@ final class ZipArchiveAdapterTest extends FilesystemAdapterTestCase
 
         $items = iterator_to_array($this->adapter()->listContents('', true));
         $this->assertCount(3, $items);
+    }
+
+    /**
+     * @test
+     */
+    public function deleting_a_prefixed_directory(): void
+    {
+        $this->givenWeHaveAnExistingFile('a.txt');
+        $this->givenWeHaveAnExistingFile('/one/a.txt');
+        $this->givenWeHaveAnExistingFile('one/b.txt');
+        $this->givenWeHaveAnExistingFile('two/a.txt');
+
+        $items = iterator_to_array($this->adapter()->listContents('', true));
+        $this->assertCount(6, $items);
+
+        $this->adapter()->deleteDirectory('one');
+
+        $items = iterator_to_array($this->adapter()->listContents('', true));
+        $this->assertCount(3, $items);
+    }
+
+    /**
+     * @test
+     */
+    public function list_root_directory(): void
+    {
+        $this->givenWeHaveAnExistingFile('a.txt');
+        $this->givenWeHaveAnExistingFile('one/a.txt');
+        $this->givenWeHaveAnExistingFile('one/b.txt');
+        $this->givenWeHaveAnExistingFile('two/a.txt');
+
+        $this->assertCount(6, $this->adapter()->listContents('', true));
+        $this->assertCount(3, $this->adapter()->listContents('', false));
     }
 
     /**

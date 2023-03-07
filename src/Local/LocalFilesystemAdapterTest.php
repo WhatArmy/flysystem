@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace League\Flysystem\Local;
 
-use const LOCK_EX;
 use League\Flysystem\AdapterTestUtilities\FilesystemAdapterTestCase;
 use League\Flysystem\Config;
 use League\Flysystem\FilesystemAdapter;
@@ -23,6 +22,7 @@ use League\Flysystem\UnixVisibility\PortableVisibilityConverter;
 use League\Flysystem\Visibility;
 use League\MimeTypeDetection\EmptyExtensionToMimeTypeMap;
 use League\MimeTypeDetection\ExtensionMimeTypeDetector;
+use League\MimeTypeDetection\FinfoMimeTypeDetector;
 use Traversable;
 use function file_get_contents;
 use function file_put_contents;
@@ -33,6 +33,7 @@ use function mkdir;
 use function strnatcasecmp;
 use function symlink;
 use function usort;
+use const LOCK_EX;
 
 /**
  * @group local
@@ -65,10 +66,32 @@ class LocalFilesystemAdapterTest extends FilesystemAdapterTestCase
     /**
      * @test
      */
+    public function creating_a_local_filesystem_does_not_create_a_root_directory_when_constructed_with_lazy_root_creation(): void
+    {
+        new LocalFilesystemAdapter(static::ROOT, lazyRootCreation: true);
+        $this->assertDirectoryDoesNotExist(static::ROOT);
+    }
+
+    /**
+     * @test
+     */
     public function not_being_able_to_create_a_root_directory_results_in_an_exception(): void
     {
         $this->expectException(UnableToCreateDirectory::class);
         new LocalFilesystemAdapter('/cannot-create/this-directory/');
+    }
+
+    /**
+     * @test
+     * @see https://github.com/thephpleague/flysystem/issues/1442
+     */
+    public function falling_back_to_extension_lookup_when_finding_mime_type_of_empty_file(): void
+    {
+        $this->givenWeHaveAnExistingFile('something.csv', '');
+
+        $mimeType = $this->adapter()->mimeType('something.csv');
+
+        self::assertEquals('text/csv', $mimeType->mimeType());
     }
 
     /**
@@ -200,7 +223,7 @@ class LocalFilesystemAdapterTest extends FilesystemAdapterTestCase
     public function checking_if_a_file_exists(): void
     {
         $adapter = new LocalFilesystemAdapter(static::ROOT);
-        file_put_contents(static::ROOT . '/file.txt', 'contents');
+        $adapter->write('/file.txt', 'contents', new Config);
 
         $this->assertTrue($adapter->fileExists('/file.txt'));
     }
@@ -266,7 +289,7 @@ class LocalFilesystemAdapterTest extends FilesystemAdapterTestCase
     public function listing_directory_contents_with_link_skipping(): void
     {
         $adapter = new LocalFilesystemAdapter(static::ROOT, null, LOCK_EX, LocalFilesystemAdapter::SKIP_LINKS);
-        file_put_contents(static::ROOT . '/file.txt', 'content');
+        $adapter->write('/file.txt', 'content', new Config());
         symlink(static::ROOT . '/file.txt', static::ROOT . '/link.txt');
 
         /** @var Traversable $contentListing */
@@ -526,7 +549,10 @@ class LocalFilesystemAdapterTest extends FilesystemAdapterTestCase
     public function not_being_able_to_get_mimetype(): void
     {
         $this->expectException(UnableToRetrieveMetadata::class);
-        $adapter = new LocalFilesystemAdapter(static::ROOT);
+        $adapter = new LocalFilesystemAdapter(
+            location: static::ROOT,
+            mimeTypeDetector: new FinfoMimeTypeDetector(),
+        );
         $adapter->mimeType('flysystem.svg');
     }
 
@@ -657,6 +683,20 @@ class LocalFilesystemAdapterTest extends FilesystemAdapterTestCase
         } else {
             self::assertFileNotExists($filename, $message);
         }
+    }
+
+    /**
+     * @test
+     */
+    public function get_checksum_with_specified_algo(): void
+    {
+        /** @var LocalFilesystemAdapter $adapter */
+        $adapter = $this->adapter();
+
+        $adapter->write('path.txt', 'foobar', new Config());
+        $checksum = $adapter->checksum('path.txt', new Config(['checksum_algo' => 'crc32c']));
+
+        $this->assertSame('0d5f5c7f', $checksum);
     }
 
     public static function assertDirectoryDoesNotExist(string $directory, string $message = ''): void

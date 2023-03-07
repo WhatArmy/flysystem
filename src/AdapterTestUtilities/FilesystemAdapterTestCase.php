@@ -4,23 +4,29 @@ declare(strict_types=1);
 
 namespace League\Flysystem\AdapterTestUtilities;
 
-use const PHP_EOL;
+use DateInterval;
+use DateTimeImmutable;
 use Generator;
+use League\Flysystem\ChecksumProvider;
 use League\Flysystem\Config;
 use League\Flysystem\DirectoryAttributes;
 use League\Flysystem\FileAttributes;
 use League\Flysystem\FilesystemAdapter;
 use League\Flysystem\StorageAttributes;
 use League\Flysystem\UnableToMoveFile;
+use League\Flysystem\UnableToProvideChecksum;
 use League\Flysystem\UnableToReadFile;
 use League\Flysystem\UnableToRetrieveMetadata;
 use League\Flysystem\UnableToSetVisibility;
+use League\Flysystem\UrlGeneration\PublicUrlGenerator;
+use League\Flysystem\UrlGeneration\TemporaryUrlGenerator;
 use League\Flysystem\Visibility;
 use PHPUnit\Framework\TestCase;
 use Throwable;
 use function file_get_contents;
 use function is_resource;
 use function iterator_to_array;
+use const PHP_EOL;
 
 /**
  * @codeCoverageIgnore
@@ -99,7 +105,7 @@ abstract class FilesystemAdapterTestCase extends TestCase
             return;
         }
 
-        $this->runSetup(function () use ($adapter) {
+        $this->runSetup(function() use ($adapter) {
             /** @var StorageAttributes $item */
             foreach ($adapter->listContents('', false) as $item) {
                 if ($item->isDir()) {
@@ -124,7 +130,7 @@ abstract class FilesystemAdapterTestCase extends TestCase
      */
     public function writing_and_reading_with_string(): void
     {
-        $this->runScenario(function () {
+        $this->runScenario(function() {
             $adapter = $this->adapter();
 
             $adapter->write('path.txt', 'contents', new Config());
@@ -141,7 +147,7 @@ abstract class FilesystemAdapterTestCase extends TestCase
      */
     public function writing_a_file_with_a_stream(): void
     {
-        $this->runScenario(function () {
+        $this->runScenario(function() {
             $adapter = $this->adapter();
             $writeStream = stream_with_contents('contents');
 
@@ -163,7 +169,7 @@ abstract class FilesystemAdapterTestCase extends TestCase
      */
     public function writing_and_reading_files_with_special_path(string $path): void
     {
-        $this->runScenario(function () use ($path) {
+        $this->runScenario(function() use ($path) {
             $adapter = $this->adapter();
 
             $adapter->write($path, 'contents', new Config());
@@ -196,7 +202,7 @@ abstract class FilesystemAdapterTestCase extends TestCase
      */
     public function writing_a_file_with_an_empty_stream(): void
     {
-        $this->runScenario(function () {
+        $this->runScenario(function() {
             $adapter = $this->adapter();
             $writeStream = stream_with_contents('');
 
@@ -222,7 +228,7 @@ abstract class FilesystemAdapterTestCase extends TestCase
     {
         $this->givenWeHaveAnExistingFile('path.txt', 'contents');
 
-        $this->runScenario(function () {
+        $this->runScenario(function() {
             $contents = $this->adapter()->read('path.txt');
 
             $this->assertEquals('contents', $contents);
@@ -236,7 +242,7 @@ abstract class FilesystemAdapterTestCase extends TestCase
     {
         $this->givenWeHaveAnExistingFile('path.txt', 'contents');
 
-        $this->runScenario(function () {
+        $this->runScenario(function() {
             $readStream = $this->adapter()->readStream('path.txt');
             $contents = stream_get_contents($readStream);
 
@@ -251,7 +257,7 @@ abstract class FilesystemAdapterTestCase extends TestCase
      */
     public function overwriting_a_file(): void
     {
-        $this->runScenario(function () {
+        $this->runScenario(function() {
             $this->givenWeHaveAnExistingFile('path.txt', 'contents', ['visibility' => Visibility::PUBLIC]);
             $adapter = $this->adapter();
 
@@ -267,16 +273,21 @@ abstract class FilesystemAdapterTestCase extends TestCase
     /**
      * @test
      */
-    public function deleting_a_file(): void
+    public function a_file_exists_only_when_it_is_written_and_not_deleted(): void
     {
-        $this->runScenario(function () {
+        $this->runScenario(function() {
             $adapter = $this->adapter();
-            $this->givenWeHaveAnExistingFile('path.txt', 'contents');
 
+            // does not exist before creation
+            self::assertFalse($adapter->fileExists('path.txt'));
+
+            // a file exists after creation
+            $this->givenWeHaveAnExistingFile('path.txt');
+            self::assertTrue($adapter->fileExists('path.txt'));
+
+            // a file no longer exists after creation
             $adapter->delete('path.txt');
-            $fileExists = $adapter->fileExists('path.txt');
-
-            $this->assertFalse($fileExists);
+            self::assertFalse($adapter->fileExists('path.txt'));
         });
     }
 
@@ -285,7 +296,7 @@ abstract class FilesystemAdapterTestCase extends TestCase
      */
     public function listing_contents_shallow(): void
     {
-        $this->runScenario(function () {
+        $this->runScenario(function() {
             $this->givenWeHaveAnExistingFile('some/0-path.txt', 'contents');
             $this->givenWeHaveAnExistingFile('some/1-nested/path.txt', 'contents');
 
@@ -313,7 +324,7 @@ abstract class FilesystemAdapterTestCase extends TestCase
      */
     public function checking_if_a_non_existing_directory_exists(): void
     {
-        $this->runScenario(function () {
+        $this->runScenario(function() {
             $adapter = $this->adapter();
             self::assertFalse($adapter->directoryExists('this-does-not-exist.php'));
         });
@@ -324,7 +335,7 @@ abstract class FilesystemAdapterTestCase extends TestCase
      */
     public function checking_if_a_directory_exists_after_writing_a_file(): void
     {
-        $this->runScenario(function () {
+        $this->runScenario(function() {
             $adapter = $this->adapter();
             $this->givenWeHaveAnExistingFile('existing-directory/file.txt');
             self::assertTrue($adapter->directoryExists('existing-directory'));
@@ -336,7 +347,7 @@ abstract class FilesystemAdapterTestCase extends TestCase
      */
     public function checking_if_a_directory_exists_after_creating_it(): void
     {
-        $this->runScenario(function () {
+        $this->runScenario(function() {
             $adapter = $this->adapter();
             $adapter->createDirectory('explicitly-created-directory', new Config());
             self::assertTrue($adapter->directoryExists('explicitly-created-directory'));
@@ -352,7 +363,7 @@ abstract class FilesystemAdapterTestCase extends TestCase
      */
     public function listing_contents_recursive(): void
     {
-        $this->runScenario(function () {
+        $this->runScenario(function() {
             $adapter = $this->adapter();
             $adapter->createDirectory('path', new Config());
             $adapter->write('path/file.txt', 'string', new Config());
@@ -378,7 +389,7 @@ abstract class FilesystemAdapterTestCase extends TestCase
 
     protected function givenWeHaveAnExistingFile(string $path, string $contents = 'contents', array $config = []): void
     {
-        $this->runSetup(function () use ($path, $contents, $config) {
+        $this->runSetup(function() use ($path, $contents, $config) {
             $this->adapter()->write($path, $contents, new Config($config));
         });
     }
@@ -391,7 +402,7 @@ abstract class FilesystemAdapterTestCase extends TestCase
         $adapter = $this->adapter();
         $this->givenWeHaveAnExistingFile('path.txt', 'contents');
 
-        $this->runScenario(function () use ($adapter) {
+        $this->runScenario(function() use ($adapter) {
             $attributes = $adapter->fileSize('path.txt');
             $this->assertInstanceOf(FileAttributes::class, $attributes);
             $this->assertEquals(8, $attributes->fileSize());
@@ -403,7 +414,7 @@ abstract class FilesystemAdapterTestCase extends TestCase
      */
     public function setting_visibility(): void
     {
-        $this->runScenario(function () {
+        $this->runScenario(function() {
             $adapter = $this->adapter();
             $this->givenWeHaveAnExistingFile('path.txt', 'contents', [Config::OPTION_VISIBILITY => Visibility::PUBLIC]);
 
@@ -428,7 +439,7 @@ abstract class FilesystemAdapterTestCase extends TestCase
 
         $adapter = $this->adapter();
 
-        $this->runScenario(function () use ($adapter) {
+        $this->runScenario(function() use ($adapter) {
             $adapter->createDirectory('path', new Config());
             $adapter->fileSize('path/');
         });
@@ -441,7 +452,7 @@ abstract class FilesystemAdapterTestCase extends TestCase
     {
         $this->expectException(UnableToRetrieveMetadata::class);
 
-        $this->runScenario(function () {
+        $this->runScenario(function() {
             $this->adapter()->fileSize('non-existing-file.txt');
         });
     }
@@ -453,7 +464,7 @@ abstract class FilesystemAdapterTestCase extends TestCase
     {
         $this->expectException(UnableToRetrieveMetadata::class);
 
-        $this->runScenario(function () {
+        $this->runScenario(function() {
             $this->adapter()->lastModified('non-existing-file.txt');
         });
     }
@@ -465,7 +476,7 @@ abstract class FilesystemAdapterTestCase extends TestCase
     {
         $this->expectException(UnableToRetrieveMetadata::class);
 
-        $this->runScenario(function () {
+        $this->runScenario(function() {
             $this->adapter()->visibility('non-existing-file.txt');
         });
     }
@@ -475,7 +486,7 @@ abstract class FilesystemAdapterTestCase extends TestCase
      */
     public function fetching_the_mime_type_of_an_svg_file(): void
     {
-        $this->runScenario(function () {
+        $this->runScenario(function() {
             $this->givenWeHaveAnExistingFile('file.svg', file_get_contents(__DIR__ . '/test_files/flysystem.svg'));
 
             $mimetype = $this->adapter()->mimeType('file.svg')->mimeType();
@@ -491,7 +502,7 @@ abstract class FilesystemAdapterTestCase extends TestCase
     {
         $this->expectException(UnableToRetrieveMetadata::class);
 
-        $this->runScenario(function () {
+        $this->runScenario(function() {
             $this->adapter()->mimeType('non-existing-file.txt');
         });
     }
@@ -508,7 +519,7 @@ abstract class FilesystemAdapterTestCase extends TestCase
 
         $this->expectException(UnableToRetrieveMetadata::class);
 
-        $this->runScenario(function () {
+        $this->runScenario(function() {
             $this->adapter()->mimeType('unknown-mime-type.md5');
         });
     }
@@ -521,7 +532,7 @@ abstract class FilesystemAdapterTestCase extends TestCase
         $this->givenWeHaveAnExistingFile('path1.txt');
         $this->givenWeHaveAnExistingFile('path2.txt');
 
-        $this->runScenario(function () {
+        $this->runScenario(function() {
             $contents = iterator_to_array($this->adapter()->listContents('', true));
 
             $this->assertCount(2, $contents);
@@ -533,7 +544,7 @@ abstract class FilesystemAdapterTestCase extends TestCase
      */
     public function writing_and_reading_with_streams(): void
     {
-        $this->runScenario(function () {
+        $this->runScenario(function() {
             $writeStream = stream_with_contents('contents');
             $adapter = $this->adapter();
 
@@ -557,7 +568,7 @@ abstract class FilesystemAdapterTestCase extends TestCase
     {
         $this->expectException(UnableToSetVisibility::class);
 
-        $this->runScenario(function () {
+        $this->runScenario(function() {
             $this->adapter()->setVisibility('this-path-does-not-exists.txt', Visibility::PRIVATE);
         });
     }
@@ -567,7 +578,7 @@ abstract class FilesystemAdapterTestCase extends TestCase
      */
     public function copying_a_file(): void
     {
-        $this->runScenario(function () {
+        $this->runScenario(function() {
             $adapter = $this->adapter();
             $adapter->write(
                 'source.txt',
@@ -589,7 +600,7 @@ abstract class FilesystemAdapterTestCase extends TestCase
      */
     public function copying_a_file_again(): void
     {
-        $this->runScenario(function () {
+        $this->runScenario(function() {
             $adapter = $this->adapter();
             $adapter->write(
                 'source.txt',
@@ -611,7 +622,7 @@ abstract class FilesystemAdapterTestCase extends TestCase
      */
     public function moving_a_file(): void
     {
-        $this->runScenario(function () {
+        $this->runScenario(function() {
             $adapter = $this->adapter();
             $adapter->write(
                 'source.txt',
@@ -639,7 +650,7 @@ abstract class FilesystemAdapterTestCase extends TestCase
     {
         $this->expectException(UnableToReadFile::class);
 
-        $this->runScenario(function () {
+        $this->runScenario(function() {
             $this->adapter()->read('path.txt');
         });
     }
@@ -651,7 +662,7 @@ abstract class FilesystemAdapterTestCase extends TestCase
     {
         $this->expectException(UnableToMoveFile::class);
 
-        $this->runScenario(function () {
+        $this->runScenario(function() {
             $this->adapter()->move('source.txt', 'destination.txt', new Config());
         });
     }
@@ -674,7 +685,7 @@ abstract class FilesystemAdapterTestCase extends TestCase
      */
     public function checking_if_files_exist(): void
     {
-        $this->runScenario(function () {
+        $this->runScenario(function() {
             $adapter = $this->adapter();
             $fileExistsBefore = $adapter->fileExists('some/path.txt');
             $adapter->write('some/path.txt', 'contents', new Config());
@@ -690,7 +701,7 @@ abstract class FilesystemAdapterTestCase extends TestCase
      */
     public function fetching_last_modified(): void
     {
-        $this->runScenario(function () {
+        $this->runScenario(function() {
             $adapter = $this->adapter();
             $adapter->write('path.txt', 'contents', new Config());
 
@@ -728,7 +739,7 @@ abstract class FilesystemAdapterTestCase extends TestCase
      */
     public function creating_a_directory(): void
     {
-        $this->runScenario(function () {
+        $this->runScenario(function() {
             $adapter = $this->adapter();
 
             $adapter->createDirectory('creating_a_directory/path', new Config());
@@ -751,7 +762,7 @@ abstract class FilesystemAdapterTestCase extends TestCase
      */
     public function copying_a_file_with_collision(): void
     {
-        $this->runScenario(function () {
+        $this->runScenario(function() {
             $adapter = $this->adapter();
             $adapter->write('path.txt', 'new contents', new Config());
             $adapter->write('new-path.txt', 'contents', new Config());
@@ -765,9 +776,98 @@ abstract class FilesystemAdapterTestCase extends TestCase
 
     protected function assertFileExistsAtPath(string $path): void
     {
-        $this->runScenario(function () use ($path) {
+        $this->runScenario(function() use ($path) {
             $fileExists = $this->adapter()->fileExists($path);
             $this->assertTrue($fileExists);
         });
+    }
+
+    /**
+     * @test
+     */
+    public function generating_a_public_url(): void
+    {
+        $adapter = $this->adapter();
+
+        if ( ! $adapter instanceof PublicUrlGenerator) {
+            $this->markTestSkipped('Adapter does not supply public URls');
+        }
+
+        $adapter->write('some/path.txt', 'public contents', new Config(['visibility' => 'public']));
+
+        $url = $adapter->publicUrl('some/path.txt', new Config());
+        $contents = file_get_contents($url);
+
+        self::assertEquals('public contents', $contents);
+    }
+
+    /**
+     * @test
+     */
+    public function generating_a_temporary_url(): void
+    {
+        $adapter = $this->adapter();
+
+        if ( ! $adapter instanceof TemporaryUrlGenerator) {
+            $this->markTestSkipped('Adapter does not supply temporary URls');
+        }
+
+        $adapter->write('some/private.txt', 'public contents', new Config(['visibility' => 'private']));
+
+        $expiresAt = (new DateTimeImmutable())->add(DateInterval::createFromDateString('1 minute'));
+        $url = $adapter->temporaryUrl('some/private.txt', $expiresAt, new Config());
+        $contents = file_get_contents($url);
+
+        self::assertEquals('public contents', $contents);
+    }
+
+    /**
+     * @test
+     */
+    public function get_checksum(): void
+    {
+        $adapter = $this->adapter();
+
+        if ( ! $adapter instanceof ChecksumProvider) {
+            $this->markTestSkipped('Adapter does not supply providing checksums');
+        }
+
+        $adapter->write('path.txt', 'foobar', new Config());
+
+        $this->assertSame('3858f62230ac3c915f300c664312c63f', $adapter->checksum('path.txt', new Config()));
+    }
+
+    /**
+     * @test
+     */
+    public function cannot_get_checksum_for_non_existent_file(): void
+    {
+        $adapter = $this->adapter();
+
+        if ( ! $adapter instanceof ChecksumProvider) {
+            $this->markTestSkipped('Adapter does not supply providing checksums');
+        }
+
+        $this->expectException(UnableToProvideChecksum::class);
+
+        $adapter->checksum('path.txt', new Config());
+    }
+
+    /**
+     * @test
+     */
+    public function cannot_get_checksum_for_directory(): void
+    {
+        $adapter = $this->adapter();
+
+        if ( ! $adapter instanceof ChecksumProvider) {
+            $this->markTestSkipped('Adapter does not supply providing checksums');
+        }
+
+        $adapter->createDirectory('dir', new Config());
+
+        $this->expectException(UnableToProvideChecksum::class);
+
+        $adapter->checksum('dir', new Config());
     }
 }

@@ -20,9 +20,9 @@ use League\Flysystem\UnableToReadFile;
 use League\Flysystem\UnableToRetrieveMetadata;
 use League\Flysystem\UnableToSetVisibility;
 use League\Flysystem\UnableToWriteFile;
+use League\Flysystem\UrlGeneration\PublicUrlGenerator;
 use RuntimeException;
 use Sabre\DAV\Client;
-use Sabre\DAV\Exception\NotFound;
 use Sabre\DAV\Xml\Property\ResourceType;
 use Sabre\HTTP\ClientHttpException;
 use Sabre\HTTP\Request;
@@ -34,9 +34,10 @@ use function dirname;
 use function explode;
 use function fclose;
 use function implode;
-use function ltrim;
+use function parse_url;
+use function rawurldecode;
 
-class WebDAVAdapter implements FilesystemAdapter
+class WebDAVAdapter implements FilesystemAdapter, PublicUrlGenerator
 {
     public const ON_VISIBILITY_THROW_ERROR = 'throw';
     public const ON_VISIBILITY_IGNORE = 'ignore';
@@ -57,14 +58,13 @@ class WebDAVAdapter implements FilesystemAdapter
         private string $visibilityHandling = self::ON_VISIBILITY_THROW_ERROR,
         private bool $manualCopy = false,
         private bool $manualMove = false,
-
     ) {
         $this->prefixer = new PathPrefixer($prefix);
     }
 
     public function fileExists(string $path): bool
     {
-        $location = $this->prefixer->prefixPath($this->encodePath($path));
+        $location = $this->encodePath($this->prefixer->prefixPath($path));
 
         try {
             $properties = $this->client->propFind($location, ['{DAV:}resourcetype', '{DAV:}iscollection']);
@@ -92,7 +92,7 @@ class WebDAVAdapter implements FilesystemAdapter
 
     public function directoryExists(string $path): bool
     {
-        $location = $this->prefixer->prefixPath($this->encodePath($path));
+        $location = $this->encodePath($this->prefixer->prefixPath($path));
 
         try {
             $properties = $this->client->propFind($location, ['{DAV:}resourcetype', '{DAV:}iscollection']);
@@ -123,7 +123,7 @@ class WebDAVAdapter implements FilesystemAdapter
     private function upload(string $path, mixed $contents): void
     {
         $this->createParentDirFor($path);
-        $location = $this->prefixer->prefixPath($this->encodePath($path));
+        $location = $this->encodePath($this->prefixer->prefixPath($path));
 
         try {
             $response = $this->client->request('PUT', $location, $contents);
@@ -133,13 +133,13 @@ class WebDAVAdapter implements FilesystemAdapter
                 throw new RuntimeException('Unexpected status code received: ' . $statusCode);
             }
         } catch (Throwable $exception) {
-            throw UnableToWriteFile::atLocation($path, '', $exception);
+            throw UnableToWriteFile::atLocation($path, $exception->getMessage(), $exception);
         }
     }
 
     public function read(string $path): string
     {
-        $location = $this->prefixer->prefixPath($this->encodePath($path));
+        $location = $this->encodePath($this->prefixer->prefixPath($path));
 
         try {
             $response = $this->client->request('GET', $location);
@@ -150,13 +150,13 @@ class WebDAVAdapter implements FilesystemAdapter
 
             return $response['body'];
         } catch (Throwable $exception) {
-            throw UnableToReadFile::fromLocation($path, '', $exception);
+            throw UnableToReadFile::fromLocation($path, $exception->getMessage(), $exception);
         }
     }
 
     public function readStream(string $path)
     {
-        $location = $this->prefixer->prefixPath($this->encodePath($path));
+        $location = $this->encodePath($this->prefixer->prefixPath($path));
 
         try {
             $url = $this->client->getAbsoluteUrl($location);
@@ -170,13 +170,13 @@ class WebDAVAdapter implements FilesystemAdapter
 
             return $response->getBodyAsStream();
         } catch (Throwable $exception) {
-            throw UnableToReadFile::fromLocation($path, '', $exception);
+            throw UnableToReadFile::fromLocation($path, $exception->getMessage(), $exception);
         }
     }
 
     public function delete(string $path): void
     {
-        $location = $this->prefixer->prefixPath($this->encodePath($path));
+        $location = $this->encodePath($this->prefixer->prefixPath($path));
 
         try {
             $response = $this->client->request('DELETE', $location);
@@ -187,14 +187,14 @@ class WebDAVAdapter implements FilesystemAdapter
             }
         } catch (Throwable $exception) {
             if ( ! ($exception instanceof ClientHttpException && $exception->getCode() === 404)) {
-                throw UnableToDeleteFile::atLocation($path, '', $exception);
+                throw UnableToDeleteFile::atLocation($path, $exception->getMessage(), $exception);
             }
         }
     }
 
     public function deleteDirectory(string $path): void
     {
-        $location = $this->prefixer->prefixDirectoryPath($this->encodePath($path));
+        $location = $this->encodePath($this->prefixer->prefixDirectoryPath($path));
 
         try {
             $statusCode = $this->client->request('DELETE', $location)['statusCode'];
@@ -204,22 +204,26 @@ class WebDAVAdapter implements FilesystemAdapter
             }
         } catch (Throwable $exception) {
             if ( ! ($exception instanceof ClientHttpException && $exception->getCode() === 404)) {
-                throw UnableToDeleteDirectory::atLocation($path, '', $exception);
+                throw UnableToDeleteDirectory::atLocation($path, $exception->getMessage(), $exception);
             }
         }
     }
 
     public function createDirectory(string $path, Config $config): void
     {
-        $parts = explode('/', $path);
+        $parts = explode('/', $this->prefixer->prefixDirectoryPath($path));
         $directoryParts = [];
 
         foreach ($parts as $directory) {
+            if ($directory === '.' || $directory === '') {
+                return;
+            }
+
             $directoryParts[] = $directory;
             $directoryPath = implode('/', $directoryParts);
-            $location = $this->prefixer->prefixDirectoryPath($this->encodePath($directoryPath));
+            $location = $this->encodePath($directoryPath) . '/';
 
-            if ($this->directoryExists($directoryPath)) {
+            if ($this->directoryExists($this->prefixer->stripDirectoryPrefix($directoryPath))) {
                 continue;
             }
 
@@ -270,12 +274,15 @@ class WebDAVAdapter implements FilesystemAdapter
 
     public function listContents(string $path, bool $deep): iterable
     {
-        $location = $this->prefixer->prefixDirectoryPath($this->encodePath($path));
+        $location = $this->encodePath($this->prefixer->prefixDirectoryPath($path));
         $response = $this->client->propFind($location, self::FIND_PROPERTIES, 1);
+
+        // This is the directory itself, the files are subsequent entries.
         array_shift($response);
 
         foreach ($response as $path => $object) {
-            $path = $this->prefixer->stripPrefix(rawurldecode($path));
+            $path = (string) parse_url(rawurldecode($path), PHP_URL_PATH);
+            $path = $this->prefixer->stripPrefix($path);
             $object = $this->normalizeObject($object);
 
             if ($this->propsIsDirectory($object)) {
@@ -290,7 +297,7 @@ class WebDAVAdapter implements FilesystemAdapter
                 }
             } else {
                 yield new FileAttributes(
-                                  $path,
+                    $path,
                     fileSize:     $object['file_size'] ?? null,
                     lastModified: $object['last_modified'] ?? null,
                     mimeType:     $object['mime_type'] ?? null,
@@ -327,16 +334,17 @@ class WebDAVAdapter implements FilesystemAdapter
     {
         if ($this->manualMove) {
             $this->manualMove($source, $destination);
+
             return;
         }
 
         $this->createParentDirFor($destination);
-        $location = $this->prefixer->prefixPath($this->encodePath($source));
-        $newLocation = $this->prefixer->prefixPath($this->encodePath($destination));
+        $location = $this->encodePath($this->prefixer->prefixPath($source));
+        $newLocation = $this->encodePath($this->prefixer->prefixPath($destination));
 
         try {
-            $response = $this->client->request('MOVE', '/' . ltrim($location, '/'), null, [
-                'Destination' => '/' . ltrim($newLocation, '/'),
+            $response = $this->client->request('MOVE', $location, null, [
+                'Destination' => $this->client->getAbsoluteUrl($newLocation),
             ]);
 
             if ($response['statusCode'] < 200 || $response['statusCode'] >= 300) {
@@ -363,16 +371,17 @@ class WebDAVAdapter implements FilesystemAdapter
     {
         if ($this->manualCopy) {
             $this->manualCopy($source, $destination);
+
             return;
         }
 
         $this->createParentDirFor($destination);
-        $location = $this->prefixer->prefixPath($this->encodePath($source));
-        $newLocation = $this->prefixer->prefixPath($this->encodePath($destination));
+        $location = $this->encodePath($this->prefixer->prefixPath($source));
+        $newLocation = $this->encodePath($this->prefixer->prefixPath($destination));
 
         try {
-            $response = $this->client->request('COPY', '/' . ltrim($location, '/'), null, [
-                'Destination' => '/' . ltrim($newLocation, '/'),
+            $response = $this->client->request('COPY', $location, null, [
+                'Destination' => $this->client->getAbsoluteUrl($newLocation),
             ]);
 
             if ($response['statusCode'] < 200 || $response['statusCode'] >= 300) {
@@ -410,10 +419,6 @@ class WebDAVAdapter implements FilesystemAdapter
     {
         $dirname = dirname($path);
 
-        if ($dirname === '.' || $dirname === '') {
-            return;
-        }
-
         if ($this->directoryExists($dirname)) {
             return;
         }
@@ -434,7 +439,12 @@ class WebDAVAdapter implements FilesystemAdapter
 
             return $result[$property];
         } catch (Throwable $exception) {
-            throw UnableToRetrieveMetadata::create($path, $section, '', $exception);
+            throw UnableToRetrieveMetadata::create($path, $section, $exception->getMessage(), $exception);
         }
+    }
+
+    public function publicUrl(string $path, Config $config): string
+    {
+        return $this->client->getAbsoluteUrl($this->encodePath($this->prefixer->prefixPath($path)));
     }
 }

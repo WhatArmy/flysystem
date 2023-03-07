@@ -27,6 +27,11 @@ use League\MimeTypeDetection\MimeTypeDetector;
 use phpseclib\Net\SFTP;
 use Throwable;
 
+use function rtrim;
+
+/**
+ * @deprecated The "League\Flysystem\PhpseclibV2\SftpAdapter" class is deprecated since Flysystem 3.0, use "League\Flysystem\PhpseclibV3\SftpAdapter" instead.
+ */
 class SftpAdapter implements FilesystemAdapter
 {
     /**
@@ -131,7 +136,7 @@ class SftpAdapter implements FilesystemAdapter
             $visibility
         ) : $this->visibilityConverter->defaultForDirectories();
 
-        if ( ! $connection->mkdir($location, $mode, true)) {
+        if ( ! $connection->mkdir($location, $mode, true) && ! $connection->is_dir($location)) {
             throw UnableToCreateDirectory::atLocation($directory);
         }
     }
@@ -143,7 +148,7 @@ class SftpAdapter implements FilesystemAdapter
         } catch (UnableToWriteFile $exception) {
             throw $exception;
         } catch (Throwable $exception) {
-            throw UnableToWriteFile::atLocation($path, '', $exception);
+            throw UnableToWriteFile::atLocation($path, $exception->getMessage(), $exception);
         }
     }
 
@@ -154,7 +159,7 @@ class SftpAdapter implements FilesystemAdapter
         } catch (UnableToWriteFile $exception) {
             throw $exception;
         } catch (Throwable $exception) {
-            throw UnableToWriteFile::atLocation($path, '', $exception);
+            throw UnableToWriteFile::atLocation($path, $exception->getMessage(), $exception);
         }
     }
 
@@ -197,9 +202,10 @@ class SftpAdapter implements FilesystemAdapter
 
     public function deleteDirectory(string $path): void
     {
-        $location = $this->prefixer->prefixPath($path);
+        $location = rtrim($this->prefixer->prefixPath($path), '/') . '/';
         $connection = $this->connectionProvider->provideConnection();
-        $connection->delete(rtrim($location, '/') . '/');
+        $connection->delete($location);
+        $connection->rmdir($location);
     }
 
     public function createDirectory(string $path, Config $config): void
@@ -243,7 +249,7 @@ class SftpAdapter implements FilesystemAdapter
             $contents = $this->read($path);
             $mimetype = $this->mimeTypeDetector->detectMimeType($path, $contents);
         } catch (Throwable $exception) {
-            throw UnableToRetrieveMetadata::mimeType($path, '', $exception);
+            throw UnableToRetrieveMetadata::mimeType($path, $exception->getMessage(), $exception);
         }
 
         if ($mimetype === null) {
@@ -302,7 +308,7 @@ class SftpAdapter implements FilesystemAdapter
         $permissions = $attributes['permissions'] & 0777;
         $lastModified = $attributes['mtime'] ?? null;
 
-        if ($attributes['type'] === NET_SFTP_TYPE_DIRECTORY) {
+        if (($attributes['type'] ?? null) === NET_SFTP_TYPE_DIRECTORY) {
             return new DirectoryAttributes(
                 ltrim($path, '/'),
                 $this->visibilityConverter->inverseForDirectory($permissions),

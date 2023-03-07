@@ -12,6 +12,7 @@ use League\Flysystem\UnableToDeleteDirectory;
 use League\Flysystem\UnableToDeleteFile;
 use League\Flysystem\UnableToRetrieveMetadata;
 use League\Flysystem\UnableToWriteFile;
+use function getenv;
 
 /**
  * @group gcs
@@ -31,6 +32,16 @@ class GoogleCloudStorageAdapterTest extends FilesystemAdapterTestCase
         static::$prefixer = new PathPrefixer(static::$adapterPrefix);
     }
 
+    protected static function bucketName(): string|array|false
+    {
+        return 'flysystem';
+    }
+
+    protected static function visibilityHandler(): VisibilityHandler
+    {
+        return new PortableVisibilityHandler();
+    }
+
     public function prefixPath(string $path): string
     {
         return static::$prefixer->prefixPath($path);
@@ -48,13 +59,41 @@ class GoogleCloudStorageAdapterTest extends FilesystemAdapterTestCase
         }
 
         $clientOptions = [
-            'projectId' => 'flysystem-testing',
+            'projectId' => getenv('GOOGLE_CLOUD_PROJECT'),
             'keyFilePath' => __DIR__ . '/../../google-cloud-service-account.json',
         ];
         $storageClient = new StubStorageClient($clientOptions);
-        static::$bucket = $bucket = $storageClient->bucket('flysystem');
+        /** @var StubRiggedBucket $bucket */
+        $bucket = $storageClient->bucket(self::bucketName());
+        static::$bucket = $bucket;
 
-        return new GoogleCloudStorageAdapter($bucket, static::$adapterPrefix);
+        return new GoogleCloudStorageAdapter(
+            $bucket,
+            static::$adapterPrefix,
+            visibilityHandler: self::visibilityHandler(),
+        );
+    }
+
+    /**
+     * @test
+     */
+    public function writing_with_specific_metadata(): void
+    {
+        $adapter = $this->adapter();
+        $adapter->write('some/path.txt', 'contents', new Config(['metadata' => ['contentType' => 'text/plain+special']]));
+        $mimeType = $adapter->mimeType('some/path.txt')->mimeType();
+        $this->assertEquals('text/plain+special', $mimeType);
+    }
+
+    /**
+     * @test
+     */
+    public function guessing_the_mime_type_when_writing(): void
+    {
+        $adapter = $this->adapter();
+        $adapter->write('some/config.txt', '<?xml version="1.0" encoding="UTF-8"?><test/>', new Config());
+        $mimeType = $adapter->mimeType('some/config.txt')->mimeType();
+        $this->assertEquals('text/xml', $mimeType);
     }
 
     /**

@@ -27,35 +27,20 @@ use League\MimeTypeDetection\MimeTypeDetector;
 use phpseclib3\Net\SFTP;
 use Throwable;
 
+use function rtrim;
+
 class SftpAdapter implements FilesystemAdapter
 {
-    /**
-     * @var ConnectionProvider
-     */
-    private $connectionProvider;
-
-    /**
-     * @var VisibilityConverter
-     */
-    private $visibilityConverter;
-
-    /**
-     * @var PathPrefixer
-     */
-    private $prefixer;
-
-    /**
-     * @var MimeTypeDetector
-     */
-    private $mimeTypeDetector;
+    private VisibilityConverter $visibilityConverter;
+    private PathPrefixer $prefixer;
+    private MimeTypeDetector $mimeTypeDetector;
 
     public function __construct(
-        ConnectionProvider $connectionProvider,
+        private ConnectionProvider $connectionProvider,
         string $root,
         VisibilityConverter $visibilityConverter = null,
         MimeTypeDetector $mimeTypeDetector = null
     ) {
-        $this->connectionProvider = $connectionProvider;
         $this->prefixer = new PathPrefixer($root);
         $this->visibilityConverter = $visibilityConverter ?: new PortableVisibilityConverter();
         $this->mimeTypeDetector = $mimeTypeDetector ?: new FinfoMimeTypeDetector();
@@ -131,7 +116,7 @@ class SftpAdapter implements FilesystemAdapter
             $visibility
         ) : $this->visibilityConverter->defaultForDirectories();
 
-        if ( ! $connection->mkdir($location, $mode, true)) {
+        if ( ! $connection->mkdir($location, $mode, true) && ! $connection->is_dir($location)) {
             throw UnableToCreateDirectory::atLocation($directory);
         }
     }
@@ -143,7 +128,7 @@ class SftpAdapter implements FilesystemAdapter
         } catch (UnableToWriteFile $exception) {
             throw $exception;
         } catch (Throwable $exception) {
-            throw UnableToWriteFile::atLocation($path, '', $exception);
+            throw UnableToWriteFile::atLocation($path, $exception->getMessage(), $exception);
         }
     }
 
@@ -154,7 +139,7 @@ class SftpAdapter implements FilesystemAdapter
         } catch (UnableToWriteFile $exception) {
             throw $exception;
         } catch (Throwable $exception) {
-            throw UnableToWriteFile::atLocation($path, '', $exception);
+            throw UnableToWriteFile::atLocation($path, $exception->getMessage(), $exception);
         }
     }
 
@@ -197,9 +182,10 @@ class SftpAdapter implements FilesystemAdapter
 
     public function deleteDirectory(string $path): void
     {
-        $location = $this->prefixer->prefixPath($path);
+        $location = rtrim($this->prefixer->prefixPath($path), '/') . '/';
         $connection = $this->connectionProvider->provideConnection();
-        $connection->delete(rtrim($location, '/') . '/');
+        $connection->delete($location);
+        $connection->rmdir($location);
     }
 
     public function createDirectory(string $path, Config $config): void
@@ -243,7 +229,7 @@ class SftpAdapter implements FilesystemAdapter
             $contents = $this->read($path);
             $mimetype = $this->mimeTypeDetector->detectMimeType($path, $contents);
         } catch (Throwable $exception) {
-            throw UnableToRetrieveMetadata::mimeType($path, '', $exception);
+            throw UnableToRetrieveMetadata::mimeType($path, $exception->getMessage(), $exception);
         }
 
         if ($mimetype === null) {
@@ -274,6 +260,10 @@ class SftpAdapter implements FilesystemAdapter
         $location = $this->prefixer->prefixPath(rtrim($path, '/')) . '/';
         $listing = $connection->rawlist($location, false);
 
+        if (false === $listing) {
+            return;
+        }
+
         foreach ($listing as $filename => $attributes) {
             if ($filename === '.' || $filename === '..') {
                 continue;
@@ -298,7 +288,7 @@ class SftpAdapter implements FilesystemAdapter
         $permissions = $attributes['mode'] & 0777;
         $lastModified = $attributes['mtime'] ?? null;
 
-        if ($attributes['type'] === NET_SFTP_TYPE_DIRECTORY) {
+        if (($attributes['type'] ?? null) === NET_SFTP_TYPE_DIRECTORY) {
             return new DirectoryAttributes(
                 ltrim($path, '/'),
                 $this->visibilityConverter->inverseForDirectory($permissions),

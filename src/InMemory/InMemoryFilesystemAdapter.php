@@ -28,21 +28,13 @@ class InMemoryFilesystemAdapter implements FilesystemAdapter
     /**
      * @var InMemoryFile[]
      */
-    private $files = [];
+    private array $files = [];
+    private MimeTypeDetector $mimeTypeDetector;
 
-    /**
-     * @var string
-     */
-    private $defaultVisibility;
-
-    /**
-     * @var MimeTypeDetector
-     */
-    private $mimeTypeDetector;
-
-    public function __construct(string $defaultVisibility = Visibility::PUBLIC, MimeTypeDetector $mimeTypeDetector = null)
-    {
-        $this->defaultVisibility = $defaultVisibility;
+    public function __construct(
+        private string $defaultVisibility = Visibility::PUBLIC,
+        MimeTypeDetector $mimeTypeDetector = null
+    ) {
         $this->mimeTypeDetector = $mimeTypeDetector ?: new FinfoMimeTypeDetector();
     }
 
@@ -55,7 +47,7 @@ class InMemoryFilesystemAdapter implements FilesystemAdapter
     {
         $path = $this->preparePath($path);
         $file = $this->files[$path] = $this->files[$path] ?? new InMemoryFile();
-        $file->updateContents($contents);
+        $file->updateContents($contents, $config->get('timestamp'));
 
         $visibility = $config->get(Config::OPTION_VISIBILITY, $this->defaultVisibility);
         $file->setVisibility($visibility);
@@ -249,7 +241,9 @@ class InMemoryFilesystemAdapter implements FilesystemAdapter
             throw UnableToCopyFile::fromLocationTo($source, $destination);
         }
 
-        $this->files[$destination] = clone $this->files[$source];
+        $lastModified = $config->get('timestamp', time());
+
+        $this->files[$destination] = $this->files[$source]->withLastModified($lastModified);
     }
 
     private function preparePath(string $path): string

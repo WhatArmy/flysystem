@@ -27,12 +27,14 @@ use AsyncAws\S3\Result\ObjectExistsWaiter;
 use AsyncAws\S3\Result\PutObjectAclOutput;
 use AsyncAws\S3\Result\PutObjectOutput;
 use AsyncAws\S3\S3Client;
+use AsyncAws\SimpleS3\SimpleS3Client;
+use DateTimeImmutable;
 use Symfony\Component\HttpClient\MockHttpClient;
 
 /**
  * @codeCoverageIgnore
  */
-class S3ClientStub extends S3Client
+class S3ClientStub extends SimpleS3Client
 {
     /**
      * @var S3Client
@@ -49,7 +51,7 @@ class S3ClientStub extends S3Client
      */
     private $stagedResult = [];
 
-    public function __construct(S3Client $client)
+    public function __construct(SimpleS3Client $client)
     {
         $this->actualClient = $client;
         parent::__construct([], null, new MockHttpClient());
@@ -172,5 +174,15 @@ class S3ClientStub extends S3Client
     {
         // @phpstan-ignore-next-line
         return $this->getStagedResult('GetObject') ?? $this->actualClient->getObject($input);
+    }
+
+    public function getUrl(string $bucket, string $key): string
+    {
+        return $this->actualClient->getUrl($bucket, $key);
+    }
+
+    public function getPresignedUrl(string $bucket, string $key, ?DateTimeImmutable $expires = null): string
+    {
+        return $this->actualClient->getPresignedUrl($bucket, $key, $expires);
     }
 }

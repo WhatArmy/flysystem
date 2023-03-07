@@ -12,30 +12,27 @@ use finfo;
  */
 class InMemoryFile
 {
-    /**
-     * @var string
-     */
-    private $contents;
+    private string $contents = '';
+    private int $lastModified = 0;
+    private ?string $visibility = null;
 
-    /**
-     * @var int
-     */
-    private $lastModified;
-
-    /**
-     * @var string
-     */
-    private $visibility;
-
-    public function updateContents(string $contents): void
+    public function updateContents(string $contents, ?int $timestamp): void
     {
         $this->contents = $contents;
-        $this->lastModified = time();
+        $this->lastModified = $timestamp ?: time();
     }
 
     public function lastModified(): int
     {
         return $this->lastModified;
+    }
+
+    public function withLastModified(int $lastModified): self
+    {
+        $clone = clone $this;
+        $clone->lastModified = $lastModified;
+
+        return $clone;
     }
 
     public function read(): string

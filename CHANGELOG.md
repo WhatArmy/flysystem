@@ -1,5 +1,290 @@
 # Changelog
 
+## 3.12.3 - 2023-02-18
+
+### Fixed
+
+- [Google Cloud Storage] Fixed ACL error for uniform bucker ACL copy operations.
+- 
+- ## 3.12.2 - 2023-01-19
+
+### Fixed
+
+- [AWS S3] Corrected param order for doesObjectExistV2 call
+
+## 3.12.1 - 2023-01-06
+
+### Fixed
+
+- [AWS S3] Use doesObjectExistV2 to prevent false positive respomnses.
+
+## 3.12.0 - 2022-12-20
+
+### Added
+
+- [Core] Chained public URL generation strategy
+
+### Fixed
+
+- [WebDAV] Handle cases where the content listing returns entries with URL prefixes.
+- [Local] Ensure correct implicit root creations happens on windows.
+- [ZipArchive] Fix incorrect zip contents listing for top-level directory.
+
+## 3.11.0 - 2022-12-02
+
+### Added
+
+- [Google Cloud Storage] Added `UniformBucketLevelAccessVisibility` to allow buckets with uniform bucket-level access policies.
+
+## 3.10.4 - 2022-11-26
+
+### Changed
+
+- [I became a dad, meet Tim](https://twitter.com/frankdejonge/status/1594966175108177921)
+
+### Fixed
+
+- [PathPrefixing] ensure `checksum` and `temporaryUrl` are prefixed
+- [WebDAV] ensure directory creation uses trailing slashes for paths
+
+## 3.10.3 - 2022-11-14
+
+### Fixed
+
+- [Local] Handle checksum errors without message (#1590)
+
+## 3.10.2 - 2022-10-25
+
+### Fixed
+
+- [Filesystem] Ensure adapter is used for exposing temporary URLs.
+
+## 3.10.1 - 2022-10-21
+
+### Fixed
+
+- [Filesystem] Added missing constructor argument to allow temporary URL generator injection.
+
+## 3.10.0 - 2022-10-21
+
+### Added
+
+- [Filesystem] added `temporaryUrl` method
+- [AsyncAWS] added `temporaryUrl` method
+- [AWS S3] added `temporaryUrl` method
+- [Azure Blob Storage] added `temporaryUrl` method
+- [MountManager] added `temporaryUrl` method
+- [Google Cloud Storage] added `temporaryUrl` method
+- [ReadOnly] added `temporaryUrl` method
+- [PathPrefixing] added `temporaryUrl` method
+
+## 3.9.0 - 2022-10-18
+
+### Added
+
+- [Filesystem] Added ability to inject custom public URL generator into a filesystem.
+- [MountManager] added `checksum` and `publicUrl` methods
+- [ZipArchive] Do not prefix directories when creating/reading an archive
+- [ShardedPrefixPublicUrlGenerator] added url generator strategy that distributes over a list of prefixes
+
+## 3.8.0 - 2022-10-18
+
+### Added
+
+- [ChecksumAlgoIsNotSupported] Exception to indicate a checksum is not supported by the checksum provider, filesystem will fall back to ad-hoc generation.
+
+## 3.7.0 - 2022-10-17
+
+### Added
+
+- [Filesystem] added `checksum` method
+- [AWS S3] added `checksum` method
+- [Async S3] added `checksum` method
+- [Google Cloud Storage] added `checksum` method
+- [Azure Blob Storage] added `checksum` method
+
+## 3.6.0 - 2022-10-13
+
+### Added
+
+- [Filesystem] Added public url method
+- [Azure Blob Storage] Added public url method
+- [AWS S3] Added public url method
+- [Async S3] Added public url method
+- [GCS] Added public url method
+- [WebDAV] Added public url method
+- [ReadOnly] Added public url method
+- [PathPrefixing] Added public url method
+
+## 3.5.3 - 2022-09-23
+
+### Fixed
+
+- [SFTP] Account for missing "type" field in metadata result.
+
+## 3.5.2 - 2022-09-23
+
+### Fixed
+
+- [SFTP v2/v3] Fixed possible race-condition during directory creation leading to false failures.
+
+## 3.5.1 - 2022-09-18
+
+### Fixed
+
+- [WebDAV] Strip directory prefix in `createDirectory` to prevent double prefixing in `directoryExists`.
+
+## 3.5.0 - 2022-09-17
+
+### Added
+
+- [AWS S3] Allow specifying visibility on move and copy
+
+## 3.4.0 - 2022-09-15
+
+### Added
+
+- Added FTP configuration option useRawListOptions (null|false|true).
+- UnableToListContents exception was added to uniformly represent content listing exceptions.
+
+### Fixed
+
+- [FTP] Don't use raw list options for FileZilla FTP servers ([#1553](https://github.com/thephpleague/flysystem/pull/1553))
+- [WebDAV] Correct path formatting for move and copy operations ([#1552](https://github.com/thephpleague/flysystem/pull/1552))
+
+## 3.3.0 - 2022-09-09
+
+### Added
+
+- StaticInMemoryAdapterRegistry contributed by @kbond
+- ReadonlyFilesystemAdapter contributed by @kbond
+- PathPrefixedAdapter contributed by @shyim
+
+### Fixed
+
+- WebDAV prefix is now encoded and the dir is not required to be pre-created ([#1533](https://github.com/thephpleague/flysystem/pull/1533))
+
+## 3.2.1 - 2022-08-14
+
+### Fixed
+
+- [ZipArchive] reverted regression introduced in [#1525](https://github.com/thephpleague/flysystem/pull/1525)
+
+## 3.2.0 - 2022-07-26
+
+### Added
+
+- [AwsS3V3] Added configuration options for forwarded options, multipart upload configuration, and metadata fields.
+
+### Fixes
+
+- [ZipArchive] delete top-level directory when deleting directories.
+- [AwsS3V3] add `ChecksumAlgorithm` to forwarded options.
+- [AwsS3V3] add `ContentMD5` to forwarded options.
+- [AwsS3V3] made forwarded options and metadata fields configurable.
+- [SftpV3] upgrade minimum version, PHP 8 and the lowest version fails to authenticate.
+
+## 3.1.1 - 2022-07-18
+
+- [AwsS3V3] Corrected exception type (#1524)
+
+## 3.1.0 - 2022-06-29
+
+- Added option for the Local adapter to create the root directory only on the first mutating (write/copy/move) action.
+
+## 3.0.23 - 2022-06-29
+
+- Added reasons for exceptions for all adapters that were missing previous exception messages.
+
+## 3.0.22 - 2022-06-29
+
+- [AwsS3V3] Added reasons for exceptions
+- [AwsS3V3] Use ListObjectsV2 instead of ListObjects
+
+## 3.0.21 - 2022-06-12
+
+- [AwsS3V3] Use ListObjectsV2 instead of ListObjects
+
+## 3.0.20 - 2022-05-25
+
+### Fixed
+
+- [Core] Fix deprecated ${var} string interpolation patterns (#1470)
+
+## 3.0.19 - 2022-05-03
+
+### Fixed
+
+- [FTP] Turn errors into proper exceptions when resolving the connection root (#1460)
+
+## 3.0.18 - 2022-04-25
+
+### Fixed
+
+- [SFTP v3] Fix retries (#1451)
+
+## 3.0.17 - 2022-04-14
+
+### Fixed
+
+- [SFTP v2] Avoid type errors when public key is not retrieved (#1446)
+- [SFTP v3] Avoid type errors when public key is not retrieved (#1446)
+
+## 3.0.16 - 2022-04-11
+
+### Fixed
+
+- [Local] fall back to extension lookups when the mime-type comes up as inconclusive.
+
+## 3.0.15 - 2022-04-08
+
+### Fixed
+
+- [GCS] Allow setting upload metadata
+- [GCS] Allow setting contentType, or resolve it
+- [SFTP v2+v3] Delete top-level directory too.
+
+## 3.0.14 - 2022-04-06
+
+### Added
+
+- [InMemory] allow to set a last-updated time (#1438)
+- [SFTP V3] allow configuring preferred algo's (#1440)
+
+## 3.0.13 - 2022-04-02
+
+### Fixed
+
+- [AWS S3 V3] Do not return top-level directory when listing that same directory
+
+## 3.0.12 - 2022-03-12
+
+### Fixed
+
+- [SFTP V3] Fix issue where listing is false.
+- [Async AWS S3] Cosmetic fix for directory prefixing.
+
+## 3.0.11 - 2022-03-04
+
+### Fixed
+
+- [AWS S3] Use globally configured options.
+
+## 3.0.10 - 2022-02-26
+
+### Fixed
+
+- [AWS S3] fix detecting directories that only contain other directories but no files.
+- [AWS S3] when checking for directory existence, limit the result set (perf)
+- [AWS S3] throw interface exception when failing to delete directory
+- [Async AWS S3] when checking for directory existence, limit the result set (perf)
+
+## 3.0.9 - 2022-02-22
+
+### Fixed
+
+- [AWS S3] support setting an ACL as a direct option instead of using visibility.
+
 ## 3.0.8 - 2022-02-16
 
 ### Fixed
@@ -71,6 +356,23 @@
 * FilesystemReader::fileExists to check for file existence
 * FilesystemAdapter::directoryExists to check for directory existence
 * FilesystemAdapter::fileExists to check for file existence
+
+## 2.5.0 - 2022-09-17
+
+### Added
+
+- [AWS S3] Allow specifying visibility on move and copy
+
+## 2.4.5 - 2022-04-25
+
+- [SFTP v3] Fix retries (#1451)
+
+## 2.4.4 - 2022-04-14
+
+### Fixed
+
+- [SFTP v2] Avoid type errors when public key is not retrieved (#1446)
+- [SFTP v3] Avoid type errors when public key is not retrieved (#1446)
 
 ## 2.4.3 - 2022-02-16
 
